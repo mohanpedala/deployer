@@ -68,7 +68,7 @@ func (r *MyAppResourceReconciler) Reconcile(ctx context.Context, req reconcile.R
 							Env: []corev1.EnvVar{
 								{
 									Name:  "PODINFO_CACHE_SERVER",
-									Value: "tcp://<host>:<port>", // Update with your values
+									Value: "tcp://" + myAppResource.Name + "-redis" + ":" + "6379/echo",
 								},
 								{
 									Name:  "PODINFO_UI_COLOR",
@@ -165,24 +165,26 @@ func (r *MyAppResourceReconciler) Reconcile(ctx context.Context, req reconcile.R
 	log.Info("Skip reconcile: Service already exists", "Service.Namespace", foundService.Namespace, "Service.Name", foundService.Name)
 
 	// Check if Redis is enabled in the spec
+	// redis connection pod
+
 	if myAppResource.Spec.Redis.Enabled {
 		// Define a Deployment object for Redis
 		redisDeployment := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: myAppResource.Namespace,
-				Name:      myAppResource.Name + "-redis-deployment",
+				Name:      myAppResource.Name + "-cache-info-redis",
 			},
 			Spec: appsv1.DeploymentSpec{
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
-						"app": "redis",
+						"app": "cache-info-redis",
 					},
 				},
 				Replicas: &myAppResource.Spec.ReplicaCount,
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
-							"app": "redis",
+							"app": "cache-info-redis",
 						},
 					},
 					Spec: corev1.PodSpec{
@@ -192,8 +194,14 @@ func (r *MyAppResourceReconciler) Reconcile(ctx context.Context, req reconcile.R
 								Image: "redis:latest",
 								Ports: []corev1.ContainerPort{
 									{
+										Name:          "redis",
 										ContainerPort: 6379,
+										Protocol:      corev1.ProtocolTCP,
 									},
+								},
+								Command: []string{
+									"redis-server",
+									"redis-master/redis.conf",
 								},
 							},
 						},
@@ -227,6 +235,193 @@ func (r *MyAppResourceReconciler) Reconcile(ctx context.Context, req reconcile.R
 		// Deployment already exists - don't requeue
 		log.Info("Skip reconcile: Deployment for Redis already exists", "Deployment.Namespace", foundRedisDeployment.Namespace, "Deployment.Name", foundRedisDeployment.Name)
 	}
+
+	// Define a Service object for Redis tcp connection
+	redisService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: myAppResource.Namespace,
+			Name:      myAppResource.Name + "-redis",
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app": "cache-info-redis",
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "redis",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       6379,
+					TargetPort: intstr.FromInt(6379),
+				},
+			},
+			Type: corev1.ServiceTypeClusterIP,
+		},
+	}
+	// Set MyAppResource instance as the owner and controller
+	if err := controllerutil.SetControllerReference(myAppResource, redisService, r.Scheme); err != nil {
+		return reconcile.Result{}, err
+	}
+
+	// Check if the Service already exists
+	foundRedisService := &corev1.Service{}
+	err = r.Get(ctx, client.ObjectKey{Namespace: redisService.Namespace, Name: redisService.Name}, foundRedisService)
+	if err != nil && errors.IsNotFound(err) {
+		log.Info("Creating a new Service for Redis", "Service.Namespace", redisService.Namespace, "Service.Name", redisService.Name)
+		err = r.Create(ctx, redisService)
+		if err != nil {
+			log.Error(err, "Failed to create new Service for Redis", "Service.Namespace", redisService.Namespace, "Service.Name", redisService.Name)
+			return reconcile.Result{}, err
+		}
+		// Service created successfully - return and requeue
+		return reconcile.Result{Requeue: true}, nil
+	} else if err != nil {
+		log.Error(err, "Failed to get Service for Redis")
+		return reconcile.Result{}, err
+	}
+
+	// Service already exists - don't requeue
+	log.Info("Skip reconcile: Service for Redis already exists", "Service.Namespace", foundRedisService.Namespace, "Service.Name", foundRedisService.Name)
+
+	// redis server info
+	if myAppResource.Spec.Redis.Enabled {
+		// Define a Deployment object for Redis
+		redisDeployment := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: myAppResource.Namespace,
+				Name:      myAppResource.Name + "-podinfo-redis",
+			},
+			Spec: appsv1.DeploymentSpec{
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app": "podinfo-redis",
+					},
+				},
+				Replicas: &myAppResource.Spec.ReplicaCount,
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{
+							"app": "podinfo-redis",
+						},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  "redis",
+								Image: "redis:latest",
+								Ports: []corev1.ContainerPort{
+									{
+										Name:          "http",
+										ContainerPort: 9898,
+										Protocol:      corev1.ProtocolTCP,
+									},
+									{
+										Name:          "http-metrics",
+										ContainerPort: 9797,
+										Protocol:      corev1.ProtocolTCP,
+									},
+									{
+										Name:          "grpc",
+										ContainerPort: 9999,
+										Protocol:      corev1.ProtocolTCP,
+									},
+								},
+								Command: []string{
+									"./podinfo",
+									"--port=9898",
+									"--cert-path=/data/cert",
+									"--port-metrics=9797",
+									"--grpc-port=9999",
+									"--grpc-service-name=podinfo",
+									"--cache-server=tcp://backend-podinfo-redis:6379",
+									"--level=info",
+									"--random-delay=false",
+									"--random-error=false",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Set MyAppResource instance as the owner and controller
+		if err := controllerutil.SetControllerReference(myAppResource, redisDeployment, r.Scheme); err != nil {
+			return reconcile.Result{}, err
+		}
+
+		// Check if the Deployment already exists
+		foundRedisDeployment := &appsv1.Deployment{}
+		err = r.Get(ctx, client.ObjectKey{Namespace: redisDeployment.Namespace, Name: redisDeployment.Name}, foundRedisDeployment)
+		if err != nil && errors.IsNotFound(err) {
+			log.Info("Creating a new Deployment for Redis", "Deployment.Namespace", redisDeployment.Namespace, "Deployment.Name", redisDeployment.Name)
+			err = r.Create(ctx, redisDeployment)
+			if err != nil {
+				log.Error(err, "Failed to create new Deployment for Redis", "Deployment.Namespace", redisDeployment.Namespace, "Deployment.Name", redisDeployment.Name)
+				return reconcile.Result{}, err
+			}
+			// Deployment created successfully - return and requeue
+			return reconcile.Result{Requeue: true}, nil
+		} else if err != nil {
+			log.Error(err, "Failed to get Deployment for Redis")
+			return reconcile.Result{}, err
+		}
+
+		// Deployment already exists - don't requeue
+		log.Info("Skip reconcile: Deployment for Redis already exists", "Deployment.Namespace", foundRedisDeployment.Namespace, "Deployment.Name", foundRedisDeployment.Name)
+	}
+
+	// Define a Service object for Redis server pod
+	redisPodInfoService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: myAppResource.Namespace,
+			Name:      myAppResource.Name + "podinfo-redis",
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app": "podinfo-redis",
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "port1",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       9898,
+					TargetPort: intstr.FromInt(9898),
+				},
+				{
+					Name:       "port2",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       9999,
+					TargetPort: intstr.FromInt(9999),
+				},
+			},
+			Type: corev1.ServiceTypeClusterIP,
+		},
+	}
+
+	// Set MyAppResource instance as the owner and controller
+	if err := controllerutil.SetControllerReference(myAppResource, redisPodInfoService, r.Scheme); err != nil {
+		return reconcile.Result{}, err
+	}
+
+	// Check if the Service already exists
+	foundRedisPodInfoService := &corev1.Service{}
+	err = r.Get(ctx, client.ObjectKey{Namespace: redisPodInfoService.Namespace, Name: redisPodInfoService.Name}, foundRedisPodInfoService)
+	if err != nil && errors.IsNotFound(err) {
+		log.Info("Creating a new Service for Redis Pod Info", "Service.Namespace", redisPodInfoService.Namespace, "Service.Name", redisPodInfoService.Name)
+		err = r.Create(ctx, redisPodInfoService)
+		if err != nil {
+			log.Error(err, "Failed to create new Service for Redis Pod Info", "Service.Namespace", redisPodInfoService.Namespace, "Service.Name", redisPodInfoService.Name)
+			return reconcile.Result{}, err
+		}
+		// Service created successfully - return and requeue
+		return reconcile.Result{Requeue: true}, nil
+	} else if err != nil {
+		log.Error(err, "Failed to get Service for Redis Pod Info")
+		return reconcile.Result{}, err
+	}
+
+	// Service already exists - don't requeue
+	log.Info("Skip reconcile: Service for Redis Pod Info already exists", "Service.Namespace", foundRedisPodInfoService.Namespace, "Service.Name", foundRedisPodInfoService.Name)
 
 	return reconcile.Result{}, nil
 }
