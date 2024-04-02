@@ -39,6 +39,8 @@ make install
 make run
 ```
 **Deploy the Custom Resource:**
+
+***Note:*** Enable Redis to test the complete scenario
 ```sh
 cat <<EOF | kubectl apply -f -
 apiVersion: mohanbinarybutter.mohanbinarybutter.com/v1alpha1
