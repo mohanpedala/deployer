@@ -230,6 +230,34 @@ func (r *MyAppResourceReconciler) Reconcile(ctx context.Context, req reconcile.R
 
 		// Deployment already exists - don't requeue
 		log.Info("Skip reconcile: Deployment for Redis already exists", "Deployment.Namespace", foundRedisDeployment.Namespace, "Deployment.Name", foundRedisDeployment.Name)
+	} else {
+		// Redis is disabled, delete existing Redis Deployment and Service
+		// Delete Redis Deployment
+		deploymentToDelete := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: myAppResource.Namespace,
+				Name:      myAppResource.Name + "-cache-info-redis",
+			},
+		}
+		if err := r.Delete(ctx, deploymentToDelete); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Failed to delete Redis Deployment", "Deployment.Namespace", deploymentToDelete.Namespace, "Deployment.Name", deploymentToDelete.Name)
+			return reconcile.Result{}, err
+		}
+
+		// Delete Redis Service
+		serviceToDelete := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: myAppResource.Namespace,
+				Name:      myAppResource.Name + "-redis",
+			},
+		}
+		if err := r.Delete(ctx, serviceToDelete); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Failed to delete Redis Service", "Service.Namespace", serviceToDelete.Namespace, "Service.Name", serviceToDelete.Name)
+			return reconcile.Result{}, err
+		}
+
+		// Redis resources deleted successfully
+		log.Info("Deleted Redis Deployment and Service", "Namespace", myAppResource.Namespace)
 	}
 
 	// Define a Service object for Redis tcp connection
