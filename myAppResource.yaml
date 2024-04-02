@@ -1,7 +1,7 @@
-apiVersion: my.api.group/v1alpha1
+apiVersion: mohanbinarybutter.mohanbinarybutter.com/v1alpha1
 kind: MyAppResource
 metadata:
-  name: whatever
+  name: hello
 spec:
   replicaCount: 2
   resources:
