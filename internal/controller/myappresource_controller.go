@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -109,6 +110,59 @@ func (r *MyAppResourceReconciler) Reconcile(ctx context.Context, req reconcile.R
 
 	// Deployment already exists - don't requeue
 	log.Info("Skip reconcile: Deployment already exists", "Deployment.Namespace", foundDeployment.Namespace, "Deployment.Name", foundDeployment.Name)
+
+	// Define a Service object
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: myAppResource.Namespace,
+			Name:      myAppResource.Name + "-service",
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app": myAppResource.Name,
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "port1",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       9898,
+					TargetPort: intstr.FromInt(9898), // Update with the actual port
+				},
+				{
+					Name:       "port2",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       9999,
+					TargetPort: intstr.FromInt(9999), // Update with the actual port
+				},
+			},
+			Type: corev1.ServiceTypeClusterIP,
+		},
+	}
+
+	// Set MyAppResource instance as the owner and controller
+	if err := controllerutil.SetControllerReference(myAppResource, service, r.Scheme); err != nil {
+		return reconcile.Result{}, err
+	}
+
+	// Check if the Service already exists
+	foundService := &corev1.Service{}
+	err = r.Get(ctx, client.ObjectKey{Namespace: service.Namespace, Name: service.Name}, foundService)
+	if err != nil && errors.IsNotFound(err) {
+		log.Info("Creating a new Service", "Service.Namespace", service.Namespace, "Service.Name", service.Name)
+		err = r.Create(ctx, service)
+		if err != nil {
+			log.Error(err, "Failed to create new Service", "Service.Namespace", service.Namespace, "Service.Name", service.Name)
+			return reconcile.Result{}, err
+		}
+		// Service created successfully - return and requeue
+		return reconcile.Result{Requeue: true}, nil
+	} else if err != nil {
+		log.Error(err, "Failed to get Service")
+		return reconcile.Result{}, err
+	}
+
+	// Service already exists - don't requeue
+	log.Info("Skip reconcile: Service already exists", "Service.Namespace", foundService.Namespace, "Service.Name", foundService.Name)
 
 	// Check if Redis is enabled in the spec
 	if myAppResource.Spec.Redis.Enabled {
