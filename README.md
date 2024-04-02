@@ -1,114 +1,96 @@
 # deployer
-// TODO(user): Add simple overview of use/purpose
+Controller that works with the custom resource which deploys an application and its data store inside kubernetes
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+## Required Tools
+* Go
+* Docker desktop
+* Enable Kubernetes in Docker-Desktop
 
-## Getting Started
+
 
 ### Prerequisites
 - go version v1.21.0+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+- Docker Desktop 4.27.0
+- K8s Client Version: v1.29.1
+- K8s Server Version: v1.29.1
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+### Procedure to run the CRD
+**Clone and Navigate to the repo**
+* Clone repository
+```sh
+git clone <https://>/<git>@github.com:mohanpedala/deployer.git
+```
+* Navigate to repository locally
+```
+cd ~/deployer
+```
+**Generate Manifests:**
 
 ```sh
-make docker-build docker-push IMG=<some-registry>/deployer:tag
+make manifests
 ```
-
-**NOTE:** This image ought to be published in the personal registry you specified. 
-And it is required to have access to pull the image from the working environment. 
-Make sure you have the proper permission to the registry if the above commands don’t work.
-
 **Install the CRDs into the cluster:**
 
 ```sh
 make install
 ```
-
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
-
+**Run CRD:**
 ```sh
-make deploy IMG=<some-registry>/deployer:tag
+make run
+```
+**Deploy the Custom Resource:**
+```sh
+cat <<EOF | kubectl apply -f -
+apiVersion: mohanbinarybutter.mohanbinarybutter.com/v1alpha1
+kind: MyAppResource
+metadata:
+  name: hello
+spec:
+  replicaCount: 2
+  resources:
+    memoryLimit: 64Mi
+    cpuRequest: 100m
+  image:
+    repository: ghcr.io/stefanprodan/podinfo
+    tag: latest
+  ui:
+    color: "#34577c"
+    message: "some string"
+  redis:
+    enabled: true
+EOF
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin 
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
+**Port Forward:**
 ```sh
-kubectl apply -k config/samples/
+kubectl port-forward deploy/hello-deployment 8080:9898
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
-
+**Application Verification:**
 ```sh
-kubectl delete -k config/samples/
+## Post
+curl -X POST http://localhost:8080/cache/samplekey -d '{"sample": "samplekeybyme"}' -H "Content-Type: application/json"
+
+## Verify the key
+curl http://localhost:8080/cache/samplekey
+
+## Update
+curl -X PUT http://localhost:8080/cache/samplekey -d '{"sample": "newsamplekeybyme"}' -H "Content-Type: application/json"
+
+## Verify the new key
+curl http://localhost:8080/cache/samplekey
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
-
+**Clean Up:**
+* Delete Custom resource manifest
 ```sh
-make uninstall
+kubectl delete -f myAppResource.yaml
 ```
-
-**UnDeploy the controller from the cluster:**
-
+* Break the running code
 ```sh
-make undeploy
+ctrl + d
 ```
-
-## Project Distribution
-
-Following are the steps to build the installer and distribute this project to users.
-
-1. Build the installer for the image built and published in the registry:
-
+* Delete the CRD
 ```sh
-make build-installer IMG=<some-registry>/deployer:tag
+kubectl delete crd myappresources.mohanbinarybutter.mohanbinarybutter.com
 ```
-
-NOTE: The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without
-its dependencies.
-
-2. Using the installer
-
-Users can just run kubectl apply -f <URL for YAML BUNDLE> to install the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/deployer/<tag or branch>/dist/install.yaml
-```
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
-
-## License
-
-Copyright 2024.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
