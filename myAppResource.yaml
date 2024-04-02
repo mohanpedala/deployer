@@ -14,4 +14,4 @@ spec:
     color: "#34577c"
     message: "some string"
   redis:
-    enabled: true
+    enabled: false
