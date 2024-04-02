@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -67,7 +68,7 @@ func (r *MyAppResourceReconciler) Reconcile(ctx context.Context, req reconcile.R
 							Env: []corev1.EnvVar{
 								{
 									Name:  "PODINFO_CACHE_SERVER",
-									Value: "tcp://<host>:<port>", // Update with your values
+									Value: "tcp://" + myAppResource.Name + "-redis.default.svc.cluster.local" + ":" + "6379",
 								},
 								{
 									Name:  "PODINFO_UI_COLOR",
@@ -110,25 +111,80 @@ func (r *MyAppResourceReconciler) Reconcile(ctx context.Context, req reconcile.R
 	// Deployment already exists - don't requeue
 	log.Info("Skip reconcile: Deployment already exists", "Deployment.Namespace", foundDeployment.Namespace, "Deployment.Name", foundDeployment.Name)
 
+	// Define a Service object
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: myAppResource.Namespace,
+			Name:      myAppResource.Name + "-service",
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app": myAppResource.Name,
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "port1",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       9898,
+					TargetPort: intstr.FromInt(9898), // Update with the actual port
+				},
+				{
+					Name:       "port2",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       9999,
+					TargetPort: intstr.FromInt(9999), // Update with the actual port
+				},
+			},
+			Type: corev1.ServiceTypeClusterIP,
+		},
+	}
+
+	// Set MyAppResource instance as the owner and controller
+	if err := controllerutil.SetControllerReference(myAppResource, service, r.Scheme); err != nil {
+		return reconcile.Result{}, err
+	}
+
+	// Check if the Service already exists
+	foundService := &corev1.Service{}
+	err = r.Get(ctx, client.ObjectKey{Namespace: service.Namespace, Name: service.Name}, foundService)
+	if err != nil && errors.IsNotFound(err) {
+		log.Info("Creating a new Service", "Service.Namespace", service.Namespace, "Service.Name", service.Name)
+		err = r.Create(ctx, service)
+		if err != nil {
+			log.Error(err, "Failed to create new Service", "Service.Namespace", service.Namespace, "Service.Name", service.Name)
+			return reconcile.Result{}, err
+		}
+		// Service created successfully - return and requeue
+		return reconcile.Result{Requeue: true}, nil
+	} else if err != nil {
+		log.Error(err, "Failed to get Service")
+		return reconcile.Result{}, err
+	}
+
+	// Service already exists - don't requeue
+	log.Info("Skip reconcile: Service already exists", "Service.Namespace", foundService.Namespace, "Service.Name", foundService.Name)
+
 	// Check if Redis is enabled in the spec
+	// redis connection pod
+
 	if myAppResource.Spec.Redis.Enabled {
 		// Define a Deployment object for Redis
 		redisDeployment := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: myAppResource.Namespace,
-				Name:      myAppResource.Name + "-redis-deployment",
+				Name:      myAppResource.Name + "-cache-info-redis",
 			},
 			Spec: appsv1.DeploymentSpec{
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
-						"app": "redis",
+						"app": "cache-info-redis",
 					},
 				},
 				Replicas: &myAppResource.Spec.ReplicaCount,
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
-							"app": "redis",
+							"app": "cache-info-redis",
 						},
 					},
 					Spec: corev1.PodSpec{
@@ -138,7 +194,9 @@ func (r *MyAppResourceReconciler) Reconcile(ctx context.Context, req reconcile.R
 								Image: "redis:latest",
 								Ports: []corev1.ContainerPort{
 									{
+										Name:          "redis",
 										ContainerPort: 6379,
+										Protocol:      corev1.ProtocolTCP,
 									},
 								},
 							},
@@ -173,6 +231,52 @@ func (r *MyAppResourceReconciler) Reconcile(ctx context.Context, req reconcile.R
 		// Deployment already exists - don't requeue
 		log.Info("Skip reconcile: Deployment for Redis already exists", "Deployment.Namespace", foundRedisDeployment.Namespace, "Deployment.Name", foundRedisDeployment.Name)
 	}
+
+	// Define a Service object for Redis tcp connection
+	redisService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: myAppResource.Namespace,
+			Name:      myAppResource.Name + "-redis",
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app": "cache-info-redis",
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "redis",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       6379,
+					TargetPort: intstr.FromInt(6379),
+				},
+			},
+			Type: corev1.ServiceTypeClusterIP,
+		},
+	}
+	// Set MyAppResource instance as the owner and controller
+	if err := controllerutil.SetControllerReference(myAppResource, redisService, r.Scheme); err != nil {
+		return reconcile.Result{}, err
+	}
+
+	// Check if the Service already exists
+	foundRedisService := &corev1.Service{}
+	err = r.Get(ctx, client.ObjectKey{Namespace: redisService.Namespace, Name: redisService.Name}, foundRedisService)
+	if err != nil && errors.IsNotFound(err) {
+		log.Info("Creating a new Service for Redis", "Service.Namespace", redisService.Namespace, "Service.Name", redisService.Name)
+		err = r.Create(ctx, redisService)
+		if err != nil {
+			log.Error(err, "Failed to create new Service for Redis", "Service.Namespace", redisService.Namespace, "Service.Name", redisService.Name)
+			return reconcile.Result{}, err
+		}
+		// Service created successfully - return and requeue
+		return reconcile.Result{Requeue: true}, nil
+	} else if err != nil {
+		log.Error(err, "Failed to get Service for Redis")
+		return reconcile.Result{}, err
+	}
+
+	// Service already exists - don't requeue
+	log.Info("Skip reconcile: Service for Redis already exists", "Service.Namespace", foundRedisService.Namespace, "Service.Name", foundRedisService.Name)
 
 	return reconcile.Result{}, nil
 }
