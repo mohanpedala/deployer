@@ -5,22 +5,30 @@ import (
 )
 
 type MyAppResourceSpec struct {
-	ReplicaCount int32 `json:"replicaCount"`
-	Resources    struct {
-		MemoryLimit string `json:"memoryLimit"`
-		CPURequest  string `json:"cpuRequest"`
-	} `json:"resources"`
-	Image struct {
-		Repository string `json:"repository"`
-		Tag        string `json:"tag"`
-	} `json:"image"`
-	UI struct {
-		Color   string `json:"color"`
-		Message string `json:"message"`
-	} `json:"ui"`
-	Redis struct {
-		Enabled bool `json:"enabled"`
-	} `json:"redis"`
+	ReplicaCount int32        `json:"replicaCount"`
+	Resources    ResourceSpec `json:"resources"`
+	Image        ImageSpec    `json:"image"`
+	UI           UISpec       `json:"ui"`
+	Redis        RedisSpec    `json:"redis"`
+}
+
+type ResourceSpec struct {
+	MemoryLimit string `json:"memoryLimit"`
+	CPURequest  string `json:"cpuRequest"`
+}
+
+type ImageSpec struct {
+	Repository string `json:"repository"`
+	Tag        string `json:"tag"`
+}
+
+type UISpec struct {
+	Color   string `json:"color"`
+	Message string `json:"message"`
+}
+
+type RedisSpec struct {
+	Enabled bool `json:"enabled"`
 }
 
 // MyAppResourceStatus defines the observed state of MyAppResource
