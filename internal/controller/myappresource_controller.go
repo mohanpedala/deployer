@@ -68,7 +68,7 @@ func (r *MyAppResourceReconciler) Reconcile(ctx context.Context, req reconcile.R
 							Env: []corev1.EnvVar{
 								{
 									Name:  "PODINFO_CACHE_SERVER",
-									Value: "tcp://" + myAppResource.Name + "-redis" + ":" + "6379/echo",
+									Value: "tcp://" + myAppResource.Name + "-redis.default.svc.cluster.local" + ":" + "6379",
 								},
 								{
 									Name:  "PODINFO_UI_COLOR",
