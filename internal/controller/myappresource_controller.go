@@ -109,6 +109,71 @@ func (r *MyAppResourceReconciler) Reconcile(ctx context.Context, req reconcile.R
 
 	// Deployment already exists - don't requeue
 	log.Info("Skip reconcile: Deployment already exists", "Deployment.Namespace", foundDeployment.Namespace, "Deployment.Name", foundDeployment.Name)
+
+	// Check if Redis is enabled in the spec
+	if myAppResource.Spec.Redis.Enabled {
+		// Define a Deployment object for Redis
+		redisDeployment := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: myAppResource.Namespace,
+				Name:      myAppResource.Name + "-redis-deployment",
+			},
+			Spec: appsv1.DeploymentSpec{
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app": "redis",
+					},
+				},
+				Replicas: &myAppResource.Spec.ReplicaCount,
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{
+							"app": "redis",
+						},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  "redis",
+								Image: "redis:latest",
+								Ports: []corev1.ContainerPort{
+									{
+										ContainerPort: 6379,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Set MyAppResource instance as the owner and controller
+		if err := controllerutil.SetControllerReference(myAppResource, redisDeployment, r.Scheme); err != nil {
+			return reconcile.Result{}, err
+		}
+
+		// Check if the Deployment already exists
+		foundRedisDeployment := &appsv1.Deployment{}
+		err = r.Get(ctx, client.ObjectKey{Namespace: redisDeployment.Namespace, Name: redisDeployment.Name}, foundRedisDeployment)
+		if err != nil && errors.IsNotFound(err) {
+			log.Info("Creating a new Deployment for Redis", "Deployment.Namespace", redisDeployment.Namespace, "Deployment.Name", redisDeployment.Name)
+			err = r.Create(ctx, redisDeployment)
+			if err != nil {
+				log.Error(err, "Failed to create new Deployment for Redis", "Deployment.Namespace", redisDeployment.Namespace, "Deployment.Name", redisDeployment.Name)
+				return reconcile.Result{}, err
+			}
+			// Deployment created successfully - return and requeue
+			return reconcile.Result{Requeue: true}, nil
+		} else if err != nil {
+			log.Error(err, "Failed to get Deployment for Redis")
+			return reconcile.Result{}, err
+		}
+
+		// Deployment already exists - don't requeue
+		log.Info("Skip reconcile: Deployment for Redis already exists", "Deployment.Namespace", foundRedisDeployment.Namespace, "Deployment.Name", foundRedisDeployment.Name)
+	}
+
 	return reconcile.Result{}, nil
 }
 
